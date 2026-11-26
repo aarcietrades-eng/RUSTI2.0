@@ -1,5 +1,4 @@
 import os
-import asyncio
 import streamlit as st
 from openai import AsyncOpenAI
 from prompts import RUSTI_CHAT_PROMPT
@@ -22,7 +21,7 @@ GROQ_MODEL = _get_secret("GROQ_MODEL", "openai/gpt-oss-20b")
 
 
 # ---------------------------------------------------------------------------
-# Page config — must be the first Streamlit call
+# Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="RUSTI",
@@ -33,13 +32,12 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------------------------
-# Custom CSS
+# Custom CSS (unchanged)
 # ---------------------------------------------------------------------------
 CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ---- Global app shell ---- */
 .stApp {
     background:
         radial-gradient(circle at 15% 0%, rgba(0, 212, 255, 0.07) 0%, transparent 45%),
@@ -49,19 +47,16 @@ CUSTOM_CSS = """
     font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
 }
 
-/* Hide Streamlit chrome */
 #MainMenu, footer, header { visibility: hidden; height: 0; }
 [data-testid="stToolbar"] { display: none; }
 [data-testid="stDecoration"] { display: none; }
 
-/* Content width and breathing room */
 [data-testid="stAppViewContainer"] > .main .block-container {
     max-width: 760px;
     padding-top: 2.2rem;
     padding-bottom: 1rem;
 }
 
-/* ---- Header ---- */
 .rusti-header {
     display: flex;
     align-items: center;
@@ -129,7 +124,6 @@ CUSTOM_CSS = """
     50%      { opacity: 0.4; box-shadow: 0 0 20px #00d4ff; }
 }
 
-/* ---- Chat messages ---- */
 [data-testid="stChatMessage"] {
     background: rgba(17, 24, 39, 0.55);
     border: 1px solid rgba(148, 163, 184, 0.07);
@@ -158,7 +152,6 @@ CUSTOM_CSS = """
 }
 
 [data-testid="stChatMessage"] p:last-child { margin-bottom: 0; }
-
 [data-testid="stChatMessage"] strong { color: #ffffff; font-weight: 600; }
 
 [data-testid="stChatMessage"] code {
@@ -179,7 +172,6 @@ CUSTOM_CSS = """
 
 [data-testid="stChatMessage"] li { margin-bottom: 0.2rem; }
 
-/* ---- Chat input ---- */
 [data-testid="stChatInput"] {
     background: rgba(17, 24, 39, 0.8);
     border: 1px solid rgba(0, 212, 255, 0.2);
@@ -207,12 +199,8 @@ CUSTOM_CSS = """
     letter-spacing: 0.02em;
 }
 
-/* ---- Spinner ---- */
-.stSpinner > div {
-    border-top-color: #00d4ff !important;
-}
+.stSpinner > div { border-top-color: #00d4ff !important; }
 
-/* ---- Scrollbar ---- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
@@ -221,7 +209,6 @@ CUSTOM_CSS = """
 }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0, 212, 255, 0.35); }
 
-/* ---- Empty state ---- */
 .rusti-empty {
     text-align: center;
     padding: 2.4rem 1rem 1.6rem;
@@ -240,7 +227,6 @@ CUSTOM_CSS = """
     margin-top: 0.8rem;
 }
 
-/* ---- Alerts ---- */
 .stAlert {
     background: rgba(17, 24, 39, 0.9) !important;
     border: 1px solid rgba(239, 68, 68, 0.3) !important;
@@ -255,7 +241,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# Guard — no key, no app
+# Guard
 # ---------------------------------------------------------------------------
 if not GROQ_API_KEY:
     st.error(
@@ -298,18 +284,10 @@ st.markdown(
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-
-# ---------------------------------------------------------------------------
-# Render history
-# ---------------------------------------------------------------------------
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-
-# ---------------------------------------------------------------------------
-# Empty state
-# ---------------------------------------------------------------------------
 if not st.session_state.messages:
     st.markdown(
         """
@@ -325,7 +303,7 @@ if not st.session_state.messages:
 
 
 # ---------------------------------------------------------------------------
-# Chat input
+# Chat — streaming
 # ---------------------------------------------------------------------------
 if prompt := st.chat_input("Ask RUSTI anything about crypto…"):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -333,24 +311,26 @@ if prompt := st.chat_input("Ask RUSTI anything about crypto…"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("analyzing…"):
-            async def _call():
-                messages = [{"role": "system", "content": RUSTI_CHAT_PROMPT}]
-                for m in st.session_state.messages:
-                    messages.append({"role": m["role"], "content": m["content"]})
-                resp = await client.chat.completions.create(
+        async def _stream():
+            messages = [{"role": "system", "content": RUSTI_CHAT_PROMPT}]
+            for m in st.session_state.messages:
+                messages.append({"role": m["role"], "content": m["content"]})
+
+            try:
+                stream = await client.chat.completions.create(
                     model=GROQ_MODEL,
                     messages=messages,
                     max_tokens=700,
                     temperature=0.5,
+                    stream=True,
                 )
-                return (resp.choices[0].message.content or "").strip()
-
-            try:
-                answer = asyncio.run(_call())
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
             except Exception as e:
-                answer = f"**Error:** `{type(e).__name__}: {e}`"
+                yield f"\n\n**Error:** `{type(e).__name__}: {e}`"
 
-        st.markdown(answer)
+        answer = st.write_stream(_stream())
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
